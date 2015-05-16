@@ -22,9 +22,10 @@ public class ServerSocketTest {
         File history = new File("../history " + df.format(today)  + ".txt");
         Map<String, String> userNames = new HashMap<>();
 
-        ServerSocket ss = new ServerSocket(8888);
+        ServerSocket ss = new ServerSocket(33333);
         Writer writer = new FileWriter(history);
         String lineSeparator = System.getProperty("line.separator");
+        int i = 0;
         while(true){
             try {
                 Socket client = ss.accept();
@@ -36,9 +37,10 @@ public class ServerSocketTest {
                         client.getPort(),client.getInputStream(), clients, history, userNames));
                 clientReadTread.start();
 
-//                Thread clientWriteThread = new Thread(new OutputClientMessageThread(client.getInetAddress().toString(),
-//                        client.getPort(),client.getOutputStream()));
-//                clientWriteThread.start();
+//                    Thread ReceiveClientMessageThread = new Thread(new OutputClientMessageThread(client.getInetAddress().toString(),
+//                            client.getPort(), client.getOutputStream()));
+//                    clientWriteThread.start();
+//                    i++;
 
                 while(userNames.get(keyForMap) == null){
                     Thread.sleep(500);
@@ -63,35 +65,35 @@ public class ServerSocketTest {
 }
 
 
-//class OutputClientMessageThread implements Runnable {
+//class ReceiveClientMessageThread implements Runnable {
 //
-//    private PrintWriter pw;
-//    private String ip;
-//    private int port;
+//    private Map<String, Socket> clients;
+//    private Map<String, String> userNames;
 //
-//    public OutputClientMessageThread(String ip, int port,OutputStream outputStream) {
-//        this.ip = ip;
-//        this.port = port;
-//        pw = new PrintWriter(outputStream);
+//    public ReceiveClientMessageThread(Map<String, Socket> clients, Map<String, String> userNames ) {
+//        this.clients = clients;
+//        this.userNames = userNames;
 //    }
 //
 //    @Override
 //    public void run() {
-//        /*while(true){
-//                pw.println("Hello from server time is " + new Date().toString());
-//                pw.flush();
-//            try {
-//                Thread.sleep(1000);
-//            } catch (InterruptedException e) {
-//                e.printStackTrace();
-//            }
-//        }*/
+//        while(true){
+//            Iterator<Map.Entry<String, Socket>> iterator = clients.entrySet().iterator();
+//
+//
+//            while (iterator.hasNext()){
+//                Map.Entry<String, Socket> pair = iterator.next();
+//                Message receivedMessage = receiveMessage();
+//                receivedMessage.setMessage(userNames.get(pair.getKey()) + " -> " + receivedMessage.getMessage());
+//        }
 //    }
 //}
+
 
 class InputClientMessageThread implements Runnable {
 
     private BufferedReader bf;
+    private InputStream is;
     private InetAddress ip;
     private int port;
     private Map<String, Socket> clients;
@@ -100,6 +102,7 @@ class InputClientMessageThread implements Runnable {
     private String keyForMap;
     private Map<String, String> userNames;
     private String userName = "";
+    private String fileName;
 
     public InputClientMessageThread(InetAddress ip, int port,InputStream inputStream, Map<String, Socket> clients, File history, Map<String, String> userNames) {
         this.ip = ip;
@@ -109,6 +112,8 @@ class InputClientMessageThread implements Runnable {
         this.history = history;
         keyForMap = "" + ip + port;
         this.userNames = userNames;
+        this.is = inputStream;
+        fileName = "../" + ip.toString().substring(1) + port;
     }
 
     @Override
@@ -130,22 +135,21 @@ class InputClientMessageThread implements Runnable {
 
         while(true){
             try {
-                String s = bf.readLine();
-                if(s != null){
+                Message receivedMessage = receiveMessage();
+
+                if(receivedMessage != null){
                     Iterator<Map.Entry<String, Socket>> iterator = clients.entrySet().iterator();
 
 
                     while (iterator.hasNext()){
                         Map.Entry<String, Socket> pair = iterator.next();
-                        if(!keyForMap.equals(pair.getKey())) {
-                            String out = String.format(userNames.get(keyForMap) + " -> " + s);
-                            if(pair.getValue().isConnected()) {
-                                pw = new PrintWriter(pair.getValue().getOutputStream());
-                                pw.println(out);
-                                pw.flush();
-                            }
+                        receivedMessage.setMessage(userNames.get(keyForMap) + " -> " + receivedMessage.getMessage());
+                        if(!keyForMap.equals(pair.getKey()) && pair.getValue().isConnected()) {
+
+                            sendMessage(receivedMessage, pair.getValue());
+
                             synchronized (this) {
-                                fileWriter.write(out + lineSeparator + "\r");
+                                fileWriter.write("[" + receivedMessage.getTime() + "] " + receivedMessage.getMessage() + lineSeparator + "\r");
                                 fileWriter.flush();
                                 notifyAll();
                             }
@@ -153,7 +157,7 @@ class InputClientMessageThread implements Runnable {
                     }
                 }
             } catch (IOException e) {
-//                e.printStackTrace();
+                e.printStackTrace();
                 String message = String.format("ip %s, port %s disconnected from server localhost\n",
                         clients.get(keyForMap).getInetAddress(),
                         clients.get(keyForMap).getPort());
@@ -170,4 +174,52 @@ class InputClientMessageThread implements Runnable {
             }
         }
     }
+
+
+    private Message receiveMessage() throws IOException {
+        BufferedInputStream bis;
+        BufferedOutputStream bos;
+
+        bis = new BufferedInputStream(is);
+        bos = new BufferedOutputStream(new FileOutputStream(new File (fileName + "ReceivedMessage")));
+        byte[] byteArray = new byte[1024];
+        int out;
+        while ((out = bis.read(byteArray)) != -1){
+            bos.write(byteArray,0,out);
+        }
+        bis.close();
+        bos.close();
+
+        FileInputStream fis = new FileInputStream(fileName + "ReceivedMessage");
+        ObjectInputStream oin = new ObjectInputStream(fis);
+        Message receivedMessage = null;
+        try {
+            receivedMessage = (Message)oin.readObject();
+        } catch (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+        return  receivedMessage;
+    }
+
+    private void sendMessage(Message message, Socket client) throws IOException {
+        BufferedInputStream bis;
+        BufferedOutputStream bos;
+
+        FileOutputStream fileOutputStream = new FileOutputStream(new File(fileName + "SendMessage"));
+        ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+
+        objectOutputStream.writeObject(message);
+        objectOutputStream.flush();
+
+        bis = new BufferedInputStream(new FileInputStream(fileName + "SendMessage"));
+        bos = new BufferedOutputStream(client.getOutputStream());
+        byte[] byteArray = new byte[1024];
+        int in;
+        while ((in = bis.read(byteArray)) != -1){
+            bos.write(byteArray,0,in);
+        }
+        bis.close();
+        bos.close();
+    }
+
 }

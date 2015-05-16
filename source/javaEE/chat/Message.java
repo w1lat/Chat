@@ -19,7 +19,7 @@ public class Message implements Serializable{
         time = df.format(new Date());
     }
 
-    public void setMessage(String message) {
+    public synchronized void setMessage(String message) {
         this.message = message;
     }
 
